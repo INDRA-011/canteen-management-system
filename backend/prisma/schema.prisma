@@ -1,0 +1,126 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlserver"
+}
+
+model Categories {
+  id          Int         @id(map: "PK__Categori__3213E83F65872C74") @default(autoincrement())
+  name        String      @unique(map: "UQ__Categori__72E12F1BB56C122C") @db.NVarChar(50)
+  description String?     @db.NVarChar(255)
+  created_at  DateTime    @default(now(), map: "DF__Categorie__creat__38996AB5")
+  menuItems   MenuItems[]
+}
+
+model Users {
+  id                   Int            @id(map: "PK__Users__3213E83F7D3C1543") @default(autoincrement())
+  name                 String         @db.NVarChar(100)
+  email                String         @unique(map: "UQ__Users__AB6E6164BC66BB1E") @db.NVarChar(150)
+  phone                String         @db.NVarChar(15)
+  college_id           String         @unique(map: "UQ__Users__012CD28D5351A9DD") @db.NVarChar(20)
+  password_hash        String         @db.NVarChar(255)
+  role                 String         @default("STUDENT", map: "DF__Users__role__3D5E1FD2") @db.NVarChar(10)
+  must_change_password Boolean        @default(true, map: "DF__Users__must_chan__3F466844")
+  created_at           DateTime       @default(now(), map: "DF__Users__created_a__403A8C7D")
+  auditLogs            AuditLog[]
+  groupMemberships     GroupMembers[]
+  groupOrders          Orders[]       @relation("GroupLeaderOrders")
+  orders               Orders[]       @relation("UserOrders")
+}
+
+model MenuItems {
+  id           Int            @id(map: "PK__MenuItem__3213E83FA47BC612") @default(autoincrement())
+  category_id  Int
+  name         String         @db.NVarChar(100)
+  price        Decimal        @db.Decimal(10, 2)
+  stock_qty    Int            @default(0, map: "DF__MenuItems__stock__4316F928")
+  is_available Boolean        @default(true, map: "DF__MenuItems__is_av__440B1D61")
+  item_type    String         @db.NVarChar(10)
+  created_at   DateTime       @default(now(), map: "DF__MenuItems__creat__45F365D3")
+  dailyReports DailyReports[]
+  category     Categories     @relation(fields: [category_id], references: [id], onUpdate: NoAction, map: "fk_menuitems_category")
+  orderItems   OrderItems[]
+}
+
+model BreakPeriods {
+  id          Int      @id(map: "PK__BreakPer__3213E83F3D0CD45E") @default(autoincrement())
+  name        String   @db.NVarChar(50)
+  start_time  DateTime @db.Time
+  cutoff_time DateTime @db.Time
+  end_time    DateTime @db.Time
+  is_active   Boolean  @default(true, map: "DF__BreakPeri__is_ac__49C3F6B7")
+  created_at  DateTime @default(now(), map: "DF__BreakPeri__creat__4AB81AF0")
+  orders      Orders[]
+}
+
+model Orders {
+  id              Int            @id(map: "PK__Orders__3213E83F9D8DA35E") @default(autoincrement())
+  user_id         Int
+  break_period_id Int
+  order_type      String         @db.NVarChar(10)
+  status          String         @default("PENDING", map: "DF__Orders__status__4E88ABD4") @db.NVarChar(15)
+  token_number    Int
+  total_amount    Decimal        @db.Decimal(10, 2)
+  placed_at       DateTime       @default(now(), map: "DF__Orders__placed_a__5070F446")
+  group_leader_id Int?
+  groupMembers    GroupMembers[]
+  orderItems      OrderItems[]
+  breakPeriod     BreakPeriods   @relation(fields: [break_period_id], references: [id], onUpdate: NoAction, map: "fk_orders_break")
+  groupLeader     Users?         @relation("GroupLeaderOrders", fields: [group_leader_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_orders_leader")
+  user            Users          @relation("UserOrders", fields: [user_id], references: [id], onUpdate: NoAction, map: "fk_orders_user")
+  payment         Payments?
+}
+
+model OrderItems {
+  id           Int       @id(map: "PK__OrderIte__3213E83F4867F413") @default(autoincrement())
+  order_id     Int
+  menu_item_id Int
+  quantity     Int       @default(1, map: "DF__OrderItem__quant__5629CD9C")
+  unit_price   Decimal   @db.Decimal(10, 2)
+  menuItem     MenuItems @relation(fields: [menu_item_id], references: [id], onUpdate: NoAction, map: "fk_orderitems_menuitem")
+  order        Orders    @relation(fields: [order_id], references: [id], onUpdate: NoAction, map: "fk_orderitems_order")
+}
+
+model GroupMembers {
+  id             Int      @id(map: "PK__GroupMem__3213E83F567C713B") @default(autoincrement())
+  order_id       Int
+  member_user_id Int
+  joined_at      DateTime @default(now(), map: "DF__GroupMemb__joine__5AEE82B9")
+  order          Orders   @relation(fields: [order_id], references: [id], onUpdate: NoAction, map: "fk_groupmembers_order")
+  member         Users    @relation(fields: [member_user_id], references: [id], onUpdate: NoAction, map: "fk_groupmembers_user")
+}
+
+model Payments {
+  id       Int       @id(map: "PK__Payments__3213E83FED6ADFEE") @default(autoincrement())
+  order_id Int       @unique(map: "UQ__Payments__4659622892D8AE02")
+  method   String    @db.NVarChar(10)
+  amount   Decimal   @db.Decimal(10, 2)
+  txn_id   String?   @db.NVarChar(100)
+  status   String    @default("PENDING", map: "DF__Payments__status__619B8048") @db.NVarChar(10)
+  paid_at  DateTime?
+  order    Orders    @relation(fields: [order_id], references: [id], onUpdate: NoAction, map: "fk_payments_order")
+}
+
+model DailyReports {
+  id               Int        @id(map: "PK__DailyRep__3213E83F70E406EB") @default(autoincrement())
+  report_date      DateTime   @unique(map: "UQ__DailyRep__7BFFBECF86E9F24D") @db.Date
+  total_orders     Int        @default(0, map: "DF__DailyRepo__total__6754599E")
+  total_revenue    Decimal    @default(0, map: "DF__DailyRepo__total__68487DD7") @db.Decimal(10, 2)
+  cancelled_orders Int        @default(0, map: "DF__DailyRepo__cance__693CA210")
+  top_item_id      Int?
+  created_at       DateTime   @default(now(), map: "DF__DailyRepo__creat__6A30C649")
+  topItem          MenuItems? @relation(fields: [top_item_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reports_menuitem")
+}
+
+model AuditLog {
+  id         Int      @id(map: "PK__AuditLog__3213E83FA983B742") @default(autoincrement())
+  user_id    Int?
+  action     String   @db.NVarChar(50)
+  target     String   @db.NVarChar(50)
+  target_id  Int?
+  detail     String?  @db.NVarChar(500)
+  created_at DateTime @default(now(), map: "DF__AuditLog__create__6E01572D")
+  user       Users?   @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_auditlog_user")
+}
