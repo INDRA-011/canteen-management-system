@@ -1,7 +1,8 @@
 require('dotenv').config()
 
-const app            = require('./app')
-const { pool, prisma } = require('./config/db')
+const app              = require('./app')
+const { pool }         = require('./config/db')
+const { initScheduler } = require('./utils/scheduler')
 
 const PORT = process.env.PORT || 5000
 
@@ -9,6 +10,9 @@ async function main() {
   try {
     await pool.connect()
     console.log('✅ SQL Server connected')
+
+    // Start all scheduled jobs
+    await initScheduler()
 
     app.listen(PORT, () => {
       console.log(`🚀 API running on http://localhost:${PORT}`)

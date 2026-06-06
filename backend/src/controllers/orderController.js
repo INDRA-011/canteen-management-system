@@ -190,7 +190,7 @@ const placeOrder = async (req, res) => {
       .input('amount',   totalAmount)
       .query(`
         INSERT INTO Payments (order_id, method, amount, status)
-        VALUES (@order_id, 'PENDING', @amount, 'PENDING')
+        VALUES (@order_id, 'ESEWA', @amount, 'PENDING')
       `)
 
     return res.status(201).json({
