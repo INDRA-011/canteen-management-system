@@ -1,27 +1,14 @@
 require('dotenv').config()
-
-const app              = require('./app')
-const { pool }         = require('./config/db')
+const { connect } = require('./config/db')
 const { initScheduler } = require('./utils/scheduler')
-
+const app = require('./app')
 const PORT = process.env.PORT || 5000
-
 async function main() {
   try {
-    await pool.connect()
-    console.log('✅ SQL Server connected')
-
-    // Start all scheduled jobs
+    await connect()
+    console.log('SQL Server connected')
     await initScheduler()
-
-    app.listen(PORT, () => {
-      console.log(`🚀 API running on http://localhost:${PORT}`)
-      console.log(`📋 Health: http://localhost:${PORT}/api/health`)
-    })
-  } catch (err) {
-    console.error('❌ Failed:', err.message)
-    process.exit(1)
-  }
+    app.listen(PORT, () => console.log('API running on http://localhost:' + PORT))
+  } catch (err) { console.error('Failed:', err.message); process.exit(1) }
 }
-
 main()

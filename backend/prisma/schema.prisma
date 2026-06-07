@@ -44,21 +44,25 @@ model MenuItems {
   orderItems   OrderItems[]
 }
 
-model BreakPeriods {
-  id          Int      @id(map: "PK__BreakPer__3213E83F3D0CD45E") @default(autoincrement())
-  name        String   @db.NVarChar(50)
-  start_time  DateTime @db.Time
-  cutoff_time DateTime @db.Time
-  end_time    DateTime @db.Time
-  is_active   Boolean  @default(true, map: "DF__BreakPeri__is_ac__49C3F6B7")
-  created_at  DateTime @default(now(), map: "DF__BreakPeri__creat__4AB81AF0")
-  orders      Orders[]
+// ── CanteenSettings ────────────────────────────────────────
+// Replaces BreakPeriods. Admin sets operating hours here.
+// slot_interval_minutes: how often a pickup slot appears
+// e.g. 15 = slots at 9:00, 9:15, 9:30...
+// blocked_slots: comma-separated times to block e.g. "13:00,13:15"
+model CanteenSettings {
+  id                     Int      @id @default(autoincrement())
+  open_time              String   @db.NVarChar(5)   // "HH:MM" e.g. "08:00"
+  close_time             String   @db.NVarChar(5)   // "HH:MM" e.g. "17:00"
+  slot_interval_minutes  Int      @default(15)
+  blocked_slots          String?  @db.NVarChar(500) // "13:00,13:15,13:30"
+  is_open                Boolean  @default(true)
+  updated_at             DateTime @updatedAt
 }
 
 model Orders {
   id              Int            @id(map: "PK__Orders__3213E83F9D8DA35E") @default(autoincrement())
   user_id         Int
-  break_period_id Int
+  pickup_time     String         @db.NVarChar(5)   // "HH:MM" — student's chosen slot
   order_type      String         @db.NVarChar(10)
   status          String         @default("PENDING", map: "DF__Orders__status__4E88ABD4") @db.NVarChar(15)
   token_number    Int
@@ -67,7 +71,6 @@ model Orders {
   group_leader_id Int?
   groupMembers    GroupMembers[]
   orderItems      OrderItems[]
-  breakPeriod     BreakPeriods   @relation(fields: [break_period_id], references: [id], onUpdate: NoAction, map: "fk_orders_break")
   groupLeader     Users?         @relation("GroupLeaderOrders", fields: [group_leader_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_orders_leader")
   user            Users          @relation("UserOrders", fields: [user_id], references: [id], onUpdate: NoAction, map: "fk_orders_user")
   payment         Payments?

@@ -6,7 +6,7 @@ const upload  = multer({ storage: multer.memoryStorage() })
 const { protect, adminOnly } = require('../middleware/auth')
 const { createStudent, bulkCreateStudents, getStudents, deleteStudent } = require('../controllers/adminController')
 const { getMenuItems, getCategories, createMenuItem, updateMenuItem, toggleAvailability, deleteMenuItem } = require('../controllers/menuController')
-const { getBreakPeriods, createBreakPeriod, updateBreakPeriod, toggleBreak } = require('../controllers/breakController')
+const { getSettings, updateSettings, getSlots } = require('../controllers/settingsController')
 const { getOrders, getOrderById, updateOrderStatus, getDashboardStats } = require('../controllers/orderQueueController')
 
 router.use(protect, adminOnly)
@@ -26,10 +26,9 @@ router.patch ('/menu/:id/toggle',   toggleAvailability)
 router.delete('/menu/:id',          deleteMenuItem)
 
 // Break period routes
-router.get   ('/breaks',            getBreakPeriods)
-router.post  ('/breaks',            createBreakPeriod)
-router.patch ('/breaks/:id',        updateBreakPeriod)
-router.patch ('/breaks/:id/toggle', toggleBreak)
+router.get   ('/settings',      getSettings)
+router.patch ('/settings',      updateSettings)
+router.get   ('/settings/slots', getSlots)
 
 // Order queue routes
 router.get   ('/dashboard',         getDashboardStats)
