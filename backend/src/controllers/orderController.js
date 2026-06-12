@@ -1,9 +1,8 @@
 const { pool } = require('../config/db')
+const { getCurrentTimeNepal } = require('../utils/time')
 
-const getCurrentTime = () => {
-  const now = new Date()
-  return `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`
-}
+const MAX_QTY_PER_ITEM = 5          // per menu item, any order type
+const MAX_GROUP_SIZE   = 10         // max members in a group order
 
 // POST /api/orders
 const placeOrder = async (req, res) => {
@@ -11,76 +10,104 @@ const placeOrder = async (req, res) => {
     const userId = req.user.id
     const { pickup_time, order_type, items, member_college_ids } = req.body
 
-    if (!pickup_time || !order_type || !items || items.length === 0) {
+    if (!pickup_time || !order_type || !items || items.length === 0)
       return res.status(400).json({ error: 'pickup_time, order_type, and items are required.' })
-    }
-    if (!['INDIVIDUAL','GROUP'].includes(order_type)) {
+    if (!['INDIVIDUAL','GROUP'].includes(order_type))
       return res.status(400).json({ error: 'order_type must be INDIVIDUAL or GROUP.' })
+
+    // Per-item quantity sanity check (applies to both order types)
+    for (const item of items) {
+      if (!item.quantity || item.quantity < 1) {
+        return res.status(400).json({ error: 'Each item must have a quantity of at least 1.' })
+      }
+      if (item.quantity > MAX_QTY_PER_ITEM) {
+        return res.status(400).json({ error: `Maximum ${MAX_QTY_PER_ITEM} of any single item per order.` })
+      }
     }
 
     // Check canteen is open
-    const settingsRes = await pool.request().query('SELECT TOP 1 * FROM CanteenSettings')
-    const settings = settingsRes.recordset[0]
+    const sr = await pool.request().query('SELECT TOP 1 * FROM CanteenSettings')
+    const settings = sr.recordset[0]
     if (!settings) return res.status(400).json({ error: 'Canteen settings not configured.' })
-
-    const now = getCurrentTime()
-    if (!settings.is_open || now < settings.open_time || now > settings.close_time) {
+    const now = getCurrentTimeNepal()
+    if (!settings.is_open || now < settings.open_time || now > settings.close_time)
       return res.status(400).json({ error: `Canteen is closed. Hours: ${settings.open_time}–${settings.close_time}.` })
+
+    // Validate group order — must have members and a sane size
+    let groupMemberIds = []
+    if (order_type === 'GROUP') {
+      const ids = Array.isArray(member_college_ids) ? member_college_ids.filter(Boolean) : []
+      if (ids.length === 0)
+        return res.status(400).json({ error: 'Group orders require at least one other member\'s College ID.' })
+      if (ids.length > MAX_GROUP_SIZE)
+        return res.status(400).json({ error: `Group orders support up to ${MAX_GROUP_SIZE} members.` })
+
+      // Resolve college IDs → user IDs, skip unknown/self
+      for (const college_id of ids) {
+        const member = await pool.request()
+          .input('college_id', college_id)
+          .query("SELECT id FROM Users WHERE college_id = @college_id AND role = 'STUDENT'")
+        const m = member.recordset[0]
+        if (m && m.id !== userId) groupMemberIds.push(m.id)
+      }
+      if (groupMemberIds.length === 0)
+        return res.status(400).json({ error: 'None of the provided College IDs matched a valid student.' })
+
+      // Group order item quantity must roughly match group size (leader + members)
+      const totalQty = items.reduce((sum, i) => sum + i.quantity, 0)
+      const groupSize = groupMemberIds.length + 1
+      if (totalQty > groupSize * 2) // generous: up to 2 items per person (1 meal + 1 drink)
+        return res.status(400).json({ error: `Order has too many items for a group of ${groupSize}. Max ${groupSize * 2} items total.` })
     }
 
-    // Validate items & check stock
+    // Validate items — check availability only, NOT stock (Option B)
     let mealCount = 0, drinkCount = 0
-    for (const item of items) {
-      const mi = await pool.request()
-        .input('id', item.menu_item_id)
-        .query('SELECT item_type, is_available, stock_qty FROM MenuItems WHERE id = @id')
-      if (!mi.recordset[0]) return res.status(400).json({ error: `Menu item ${item.menu_item_id} not found.` })
-      const m = mi.recordset[0]
-      if (!m.is_available) return res.status(400).json({ error: 'One or more items are unavailable.' })
-      if (m.stock_qty < item.quantity) return res.status(400).json({ error: `Insufficient stock for item ${item.menu_item_id}.` })
-      if (m.item_type === 'MEAL')  mealCount++
-      if (m.item_type === 'DRINK') drinkCount++
-    }
-    if (order_type === 'INDIVIDUAL' && (mealCount > 1 || drinkCount > 1)) {
-      return res.status(400).json({ error: 'Individual orders: max 1 MEAL and 1 DRINK.' })
-    }
-
-    // Calculate total
-    let totalAmount = 0
     const itemDetails = []
+
     for (const item of items) {
       const mi = await pool.request()
         .input('id', item.menu_item_id)
-        .query('SELECT id, name, price, item_type FROM MenuItems WHERE id = @id')
+        .query('SELECT id, name, price, item_type, is_available, stock_qty FROM MenuItems WHERE id = @id')
+      if (!mi.recordset[0])
+        return res.status(400).json({ error: `Menu item ${item.menu_item_id} not found.` })
       const m = mi.recordset[0]
-      totalAmount += parseFloat(m.price) * item.quantity
+      if (!m.is_available)
+        return res.status(400).json({ error: `"${m.name}" is currently unavailable.` })
+      if (m.item_type === 'MEAL')  mealCount += item.quantity
+      if (m.item_type === 'DRINK') drinkCount += item.quantity
       itemDetails.push({ ...m, quantity: item.quantity })
     }
 
-    // Token number — count orders today
+    // Individual orders: max 1 meal + 1 drink total
+    if (order_type === 'INDIVIDUAL' && (mealCount > 1 || drinkCount > 1))
+      return res.status(400).json({ error: 'Individual orders are limited to 1 meal and 1 drink. For larger orders, use Group order.' })
+
+    // Calculate total
+    const totalAmount = itemDetails.reduce((sum, i) => sum + parseFloat(i.price) * i.quantity, 0)
+
+    // Token number — count today's orders
     const tokenRes = await pool.request().query(`
       SELECT COUNT(*) AS count FROM Orders
       WHERE CAST(placed_at AS DATE) = CAST(GETDATE() AS DATE)
     `)
     const tokenNumber = tokenRes.recordset[0].count + 1
 
-    // Insert order
+    // Insert order — NO stock decrement here (Option B)
     const orderRes = await pool.request()
-      .input('user_id',      userId)
-      .input('pickup_time',  pickup_time)
-      .input('order_type',   order_type)
-      .input('token_number', tokenNumber)
-      .input('total_amount', totalAmount)
+      .input('user_id',         userId)
+      .input('pickup_time',     pickup_time)
+      .input('order_type',      order_type)
+      .input('token_number',    tokenNumber)
+      .input('total_amount',    totalAmount)
       .input('group_leader_id', order_type === 'GROUP' ? userId : null)
       .query(`
         INSERT INTO Orders (user_id, pickup_time, order_type, status, token_number, total_amount, group_leader_id)
         OUTPUT INSERTED.id
         VALUES (@user_id, @pickup_time, @order_type, 'PENDING', @token_number, @total_amount, @group_leader_id)
       `)
-
     const orderId = orderRes.recordset[0].id
 
-    // Insert items + decrement stock
+    // Insert order items
     for (const item of itemDetails) {
       await pool.request()
         .input('order_id',     orderId)
@@ -88,28 +115,17 @@ const placeOrder = async (req, res) => {
         .input('quantity',     item.quantity)
         .input('unit_price',   item.price)
         .query('INSERT INTO OrderItems (order_id, menu_item_id, quantity, unit_price) VALUES (@order_id, @menu_item_id, @quantity, @unit_price)')
+    }
+
+    // Insert resolved group members
+    for (const memberUserId of groupMemberIds) {
       await pool.request()
-        .input('qty', item.quantity)
-        .input('id',  item.id)
-        .query('UPDATE MenuItems SET stock_qty = stock_qty - @qty WHERE id = @id')
+        .input('order_id', orderId)
+        .input('member_user_id', memberUserId)
+        .query('INSERT INTO GroupMembers (order_id, member_user_id) VALUES (@order_id, @member_user_id)')
     }
 
-    // Group members
-    if (order_type === 'GROUP' && member_college_ids?.length > 0) {
-      for (const college_id of member_college_ids) {
-        const member = await pool.request()
-          .input('college_id', college_id)
-          .query("SELECT id FROM Users WHERE college_id = @college_id AND role = 'STUDENT'")
-        if (member.recordset[0]) {
-          await pool.request()
-            .input('order_id',       orderId)
-            .input('member_user_id', member.recordset[0].id)
-            .query('INSERT INTO GroupMembers (order_id, member_user_id) VALUES (@order_id, @member_user_id)')
-        }
-      }
-    }
-
-    // Create pending payment
+    // Create pending payment record
     await pool.request()
       .input('order_id', orderId)
       .input('amount',   totalAmount)
@@ -143,13 +159,12 @@ const getMyOrders = async (req, res) => {
           AND CAST(o.placed_at AS DATE) = CAST(GETDATE() AS DATE)
         ORDER BY o.placed_at DESC
       `)
-
     const orders = result.recordset
     for (const order of orders) {
       const items = await pool.request()
         .input('order_id', order.id)
         .query(`
-          SELECT oi.quantity, oi.unit_price, m.name, m.item_type
+          SELECT oi.quantity, oi.unit_price, m.name, m.item_type, m.image_url
           FROM OrderItems oi JOIN MenuItems m ON oi.menu_item_id = m.id
           WHERE oi.order_id = @order_id
         `)
@@ -158,7 +173,7 @@ const getMyOrders = async (req, res) => {
     return res.status(200).json({ orders })
   } catch (error) {
     console.error('getMyOrders error:', error.message)
-    return res.status(500).json({ error: 'Server error fetching orders.' })
+    return res.status(500).json({ error: 'Server error.' })
   }
 }
 
@@ -176,13 +191,12 @@ const getOrderHistory = async (req, res) => {
         WHERE o.user_id = @user_id
         ORDER BY o.placed_at DESC
       `)
-
     const orders = result.recordset
     for (const order of orders) {
       const items = await pool.request()
         .input('order_id', order.id)
         .query(`
-          SELECT oi.quantity, oi.unit_price, m.name, m.item_type
+          SELECT oi.quantity, oi.unit_price, m.name, m.item_type, m.image_url
           FROM OrderItems oi JOIN MenuItems m ON oi.menu_item_id = m.id
           WHERE oi.order_id = @order_id
         `)
@@ -191,49 +205,41 @@ const getOrderHistory = async (req, res) => {
     return res.status(200).json({ orders })
   } catch (error) {
     console.error('getOrderHistory error:', error.message)
-    return res.status(500).json({ error: 'Server error fetching history.' })
+    return res.status(500).json({ error: 'Server error.' })
   }
 }
 
 // GET /api/orders/menu
+// Slots are generated live from CanteenSettings on every call —
+// any admin change to hours/interval is reflected immediately.
 const getStudentMenu = async (req, res) => {
   try {
     const result = await pool.request().query(`
       SELECT m.id, m.name, m.price, m.stock_qty, m.item_type, m.is_available,
-             c.name AS category_name
+             m.image_url, c.name AS category_name
       FROM MenuItems m
       JOIN Categories c ON m.category_id = c.id
-      WHERE m.is_available = 1 AND m.stock_qty > 0
+      WHERE m.is_available = 1
       ORDER BY c.name, m.name
     `)
-
     const settingsRes = await pool.request().query('SELECT TOP 1 * FROM CanteenSettings')
-    const settings = settingsRes.recordset[0] || {}
-
-    // Generate slots
+    const s = settingsRes.recordset[0] || {}
     const slots = []
-    if (settings.open_time && settings.close_time) {
-      const [oh, om] = settings.open_time.split(':').map(Number)
-      const [ch, cm] = settings.close_time.split(':').map(Number)
-      let cur = oh * 60 + om
-      const end = ch * 60 + cm
-      const interval = settings.slot_interval_minutes || 15
-      while (cur < end) {
-        const h = String(Math.floor(cur/60)).padStart(2,'0')
-        const m = String(cur%60).padStart(2,'0')
-        slots.push(`${h}:${m}`)
-        cur += interval
+    if (s.open_time && s.close_time) {
+      const [oh,om] = s.open_time.split(':').map(Number)
+      const [ch,cm] = s.close_time.split(':').map(Number)
+      const blocked = s.blocked_slots ? s.blocked_slots.split(',').map(x => x.trim()) : []
+      for (let cur = oh*60+om; cur < ch*60+cm; cur += (s.slot_interval_minutes||15)) {
+        const slot = String(Math.floor(cur/60)).padStart(2,'0')+':'+String(cur%60).padStart(2,'0')
+        if (!blocked.includes(slot)) slots.push(slot)
       }
     }
-
     return res.status(200).json({
       menuItems: result.recordset,
-      settings: {
-        is_open:    settings.is_open,
-        open_time:  settings.open_time,
-        close_time: settings.close_time,
-      },
+      settings: { is_open: s.is_open, open_time: s.open_time, close_time: s.close_time },
       slots,
+      max_qty_per_item: MAX_QTY_PER_ITEM,
+      max_group_size: MAX_GROUP_SIZE,
     })
   } catch (error) {
     console.error('getStudentMenu error:', error.message)

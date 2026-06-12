@@ -4,6 +4,8 @@ const authRoutes     = require('./routes/auth')
 const adminRoutes    = require('./routes/admin')
 const orderRoutes    = require('./routes/orders')
 const paymentRoutes  = require('./routes/payments')
+const settingsRoutes = require('./routes/settings')
+const reportRoutes   = require('./routes/reports')
 
 const app = express()
 
@@ -18,6 +20,8 @@ app.use('/api/auth',     authRoutes)
 app.use('/api/admin',    adminRoutes)
 app.use('/api/orders',   orderRoutes)
 app.use('/api/payments', paymentRoutes)
+app.use('/api/settings', settingsRoutes)
+app.use('/api/reports', reportRoutes)
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'TCMIT Canteen API is running', time: new Date().toISOString() })

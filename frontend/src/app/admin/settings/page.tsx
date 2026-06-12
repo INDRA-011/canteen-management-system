@@ -18,7 +18,7 @@ export default function SettingsPage() {
 
   async function fetchSettings() {
     try {
-      const [s,sl] = await Promise.all([api.get('/settings'),api.get('/settings/slots')])
+      const [s,sl] = await Promise.all([api.get('/admin/settings'),api.get('/admin/settings/slots')])
       const d=s.data?.settings??s.data
       if(d) setForm({open_time:d.open_time??'07:00',close_time:d.close_time??'17:00',slot_interval_minutes:d.slot_interval_minutes??15,is_open:d.is_open??true})
       const slotsData=sl.data?.slots??sl.data??[]
@@ -28,7 +28,7 @@ export default function SettingsPage() {
 
   async function save() {
     setSaving(true)
-    try { await api.put('/settings',form); setSaved(true); setTimeout(()=>setSaved(false),2500); await fetchSettings() }
+    try { await api.put('/admin/settings',form); setSaved(true); setTimeout(()=>setSaved(false),2500); await fetchSettings() }
     catch(e){console.error(e)} finally{setSaving(false)}
   }
 

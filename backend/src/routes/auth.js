@@ -25,6 +25,6 @@ router.post("/change-password", protect, changePassword);
 
 // GET /api/auth/me
 // Protected — returns logged-in user profile
-router.get("/me", protect, getMe);
+router.get("/me", protect, getMe); // no mustChangePassword — needed by change-password screen
 
 module.exports = router;
